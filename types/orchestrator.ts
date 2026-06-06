@@ -1,4 +1,4 @@
-export type RpcAction = "read_file" | "run_command" | "list_files";
+export type RpcAction = "read_file" | "run_command" | "list_files" | "kill_command";
 
 export type ClientRpcRequest =
     | {
@@ -13,7 +13,26 @@ export type ClientRpcRequest =
     | {
         action: "list_files";
         relativePath?: string;
+      }
+    | {
+      action: "kill_command";
+      targetRequestId: string;
       };
+
+  export type CommandStreamMessage = {
+    requestId: string;
+    stream: "stdout" | "stderr";
+    chunk: string;
+  };
+
+  export type CommandCompletionResult = {
+    command: string;
+    cwd: string;
+    exitCode: number | null;
+    signal: string | null;
+    timedOut: boolean;
+    killed: boolean;
+  };
 
 export type ClientToOrchestratorMessage =
     | {
@@ -27,7 +46,10 @@ export type ClientToOrchestratorMessage =
         ok: boolean;
         result?: unknown;
         error?: string;
-      };
+      }
+    | ({
+        type: "rpc_stream";
+      } & CommandStreamMessage);
 
 export type OrchestratorToClientMessage =
     | {
@@ -50,7 +72,7 @@ export type OrchestratorConfig = {
 };
 
 export type RegisteredClient = {
-  clientId: string;
-  directoryName: string;
-  cwd: string;
+    clientId: string;
+    directoryName: string;
+    cwd: string;
 };

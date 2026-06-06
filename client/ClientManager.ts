@@ -1,20 +1,28 @@
 import net from "node:net";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { exec as execCallback } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { readdir } from "node:fs/promises";
+import type { Readable } from "node:stream";
 import type {
+    CommandCompletionResult,
     ClientRpcRequest,
     ClientToOrchestratorMessage,
     OrchestratorToClientMessage,
-} from "../shared/types/orchestrator.ts";
+} from "../types/orchestrator.ts";
 
-const exec = promisify(execCallback);
 const DEFAULT_COMMAND_TIMEOUT_MS = 30000;
 const MAX_FILE_BYTES = 200_000;
 const CONNECT_RETRY_DELAY_MS = 1500;
 const MAX_CONNECT_RETRIES = 0;
+
+type ActiveCommand = {
+    childProcess: ChildProcessByStdio<null, Readable, Readable>;
+    command: string;
+    timeout: Timer | null;
+    killed: boolean;
+    timedOut: boolean;
+};
 
 type ClientConfig = {
     host: string;
@@ -24,6 +32,7 @@ type ClientConfig = {
 export class ClientManager {
     private readonly config: ClientConfig;
     private readonly socket: net.Socket;
+    private readonly activeCommands: Map<string, ActiveCommand>;
     private buffer: string;
     private readonly directoryName: string;
     private readonly cwd: string;
@@ -34,6 +43,7 @@ export class ClientManager {
     }) {
         this.config = config;
         this.socket = new net.Socket();
+        this.activeCommands = new Map<string, ActiveCommand>();
         this.buffer = "";
         this.cwd = process.cwd();
         this.directoryName = path.basename(this.cwd);
@@ -107,6 +117,7 @@ export class ClientManager {
         });
 
         this.socket.on("close", () => {
+            this.killAllActiveCommands();
             console.log("Disconnected from orchestrator.");
         });
 
@@ -154,12 +165,24 @@ export class ClientManager {
             }
 
             if (request.action === "run_command") {
-                const result = await this.runLocalCommand(request.command, request.timeoutMs);
+                const result = await this.runLocalCommand(requestId, request.command, request.timeoutMs);
                 this.send({
                     type: "rpc_response",
                     requestId,
                     ok: true,
                     result,
+                });
+                return;
+            }
+
+            if (request.action === "kill_command") {
+                const result = this.killActiveCommand(request.targetRequestId);
+                this.send({
+                    type: "rpc_response",
+                    requestId,
+                    ok: result.ok,
+                    result: result.ok ? result : undefined,
+                    error: result.ok ? undefined : result.error,
                 });
                 return;
             }
@@ -221,39 +244,113 @@ export class ClientManager {
     }
 
     private async runLocalCommand(
+        requestId: string,
         command: string,
         timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
-    ): Promise<{ command: string; cwd: string; stdout: string; stderr: string; exitCode: number }> {
-        try {
-            const { stdout, stderr } = await exec(command, {
+    ): Promise<CommandCompletionResult> {
+        return new Promise<CommandCompletionResult>((resolve, reject) => {
+            const childProcess = spawn("/bin/sh", ["-lc", command], {
                 cwd: this.cwd,
-                timeout: timeoutMs,
-                maxBuffer: 1024 * 1024,
-                shell: "/bin/sh",
+                env: process.env,
+                stdio: ["ignore", "pipe", "pipe"],
             });
 
-            return {
+            const activeCommand: ActiveCommand = {
+                childProcess,
                 command,
-                cwd: this.cwd,
-                stdout,
-                stderr,
-                exitCode: 0,
-            };
-        } catch (error) {
-            const executionError = error as Error & {
-                code?: number | string;
-                stdout?: string;
-                stderr?: string;
+                timeout: null,
+                killed: false,
+                timedOut: false,
             };
 
+            if (timeoutMs > 0) {
+                activeCommand.timeout = setTimeout(() => {
+                    activeCommand.timedOut = true;
+                    activeCommand.killed = true;
+                    childProcess.kill("SIGTERM");
+                }, timeoutMs);
+            }
+
+            this.activeCommands.set(requestId, activeCommand);
+
+            childProcess.stdout.on("data", (chunk: Buffer | string) => {
+                this.send({
+                    type: "rpc_stream",
+                    requestId,
+                    stream: "stdout",
+                    chunk: chunk.toString("utf8"),
+                });
+            });
+
+            childProcess.stderr.on("data", (chunk: Buffer | string) => {
+                this.send({
+                    type: "rpc_stream",
+                    requestId,
+                    stream: "stderr",
+                    chunk: chunk.toString("utf8"),
+                });
+            });
+
+            childProcess.once("error", (error) => {
+                this.clearActiveCommand(requestId);
+                reject(error);
+            });
+
+            childProcess.once("close", (exitCode, signal) => {
+                const finalState = this.activeCommands.get(requestId) ?? activeCommand;
+                this.clearActiveCommand(requestId);
+
+                resolve({
+                    command,
+                    cwd: this.cwd,
+                    exitCode,
+                    signal,
+                    timedOut: finalState.timedOut,
+                    killed: finalState.killed,
+                });
+            });
+        });
+    }
+
+    private killActiveCommand(requestId: string): { ok: true; commandId: string } | { ok: false; error: string } {
+        const activeCommand = this.activeCommands.get(requestId);
+
+        if (!activeCommand) {
             return {
-                command,
-                cwd: this.cwd,
-                stdout: executionError.stdout ?? "",
-                stderr: executionError.stderr ?? executionError.message,
-                exitCode: typeof executionError.code === "number" ? executionError.code : 1,
+                ok: false,
+                error: `No active command found for request: ${requestId}`,
             };
         }
+
+        activeCommand.killed = true;
+        activeCommand.childProcess.kill("SIGTERM");
+
+        return {
+            ok: true,
+            commandId: requestId,
+        };
+    }
+
+    private killAllActiveCommands(): void {
+        for (const [requestId, activeCommand] of this.activeCommands) {
+            activeCommand.killed = true;
+            activeCommand.childProcess.kill("SIGTERM");
+            this.clearActiveCommand(requestId);
+        }
+    }
+
+    private clearActiveCommand(requestId: string): void {
+        const activeCommand = this.activeCommands.get(requestId);
+
+        if (!activeCommand) {
+            return;
+        }
+
+        if (activeCommand.timeout) {
+            clearTimeout(activeCommand.timeout);
+        }
+
+        this.activeCommands.delete(requestId);
     }
 
     private send(message: ClientToOrchestratorMessage): void {

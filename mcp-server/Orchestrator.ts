@@ -1,12 +1,13 @@
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 import type {
+    CommandCompletionResult,
     ClientRpcRequest,
     ClientToOrchestratorMessage,
     OrchestratorConfig,
     OrchestratorToClientMessage,
     RegisteredClient,
-} from "../shared/types/orchestrator.ts";
+} from "../types/orchestrator.ts";
 
 type ClientState = {
     clientId: string;
@@ -17,10 +18,16 @@ type ClientState = {
 };
 
 type PendingRequest = {
+    requestId: string;
     clientId: string;
     resolve: (value: unknown) => void;
     reject: (reason?: unknown) => void;
     timeout: Timer;
+    kind: "default" | "command";
+    stdout: string;
+    stderr: string;
+    onChunk?: (stream: "stdout" | "stderr", chunk: string) => void;
+    abortCleanup?: () => void;
 };
 
 export class Orchestrator {
@@ -130,6 +137,41 @@ export class Orchestrator {
     }
 
     async runCommandOnDirectory(directoryName: string, command: string, timeoutMs = 30000): Promise<unknown> {
+        return this.runCommandOnDirectoryWithOptions(directoryName, command, { timeoutMs });
+    }
+
+    async runCommandOnDirectoryWithOptions(
+        directoryName: string,
+        command: string,
+        options: {
+            timeoutMs?: number;
+            signal?: AbortSignal;
+            onChunk?: (stream: "stdout" | "stderr", chunk: string) => void;
+        } = {},
+    ): Promise<unknown> {
+        const client = this.findClientByDirectoryName(directoryName);
+        const timeoutMs = options.timeoutMs ?? 30000;
+
+        if (!client) {
+            throw new Error(`No connected client for directory: ${directoryName}`);
+        }
+
+        const requestId = randomUUID();
+
+        return this.sendRpcRequest(client.clientId, {
+            action: "run_command",
+            command,
+            timeoutMs,
+        }, {
+            requestId,
+            timeoutMs: timeoutMs + 3000,
+            kind: "command",
+            signal: options.signal,
+            onChunk: options.onChunk,
+        });
+    }
+
+    async killCommandOnDirectory(directoryName: string, commandId: string): Promise<unknown> {
         const client = this.findClientByDirectoryName(directoryName);
 
         if (!client) {
@@ -137,10 +179,9 @@ export class Orchestrator {
         }
 
         return this.sendRpcRequest(client.clientId, {
-            action: "run_command",
-            command,
-            timeoutMs,
-        }, timeoutMs + 3000);
+            action: "kill_command",
+            targetRequestId: commandId,
+        });
     }
 
     async listFilesOnDirectory(directoryName: string, relativePath?: string): Promise<unknown> {
@@ -168,14 +209,25 @@ export class Orchestrator {
         return null;
     }
 
-    private async sendRpcRequest(clientId: string, request: ClientRpcRequest, timeoutMs = 30000): Promise<unknown> {
+    private async sendRpcRequest(
+        clientId: string,
+        request: ClientRpcRequest,
+        options: {
+            requestId?: string;
+            timeoutMs?: number;
+            kind?: "default" | "command";
+            signal?: AbortSignal;
+            onChunk?: (stream: "stdout" | "stderr", chunk: string) => void;
+        } = {},
+    ): Promise<unknown> {
         const state = this.clients.get(clientId);
 
         if (!state) {
             throw new Error(`Client is not connected: ${clientId}`);
         }
 
-        const requestId = randomUUID();
+        const requestId = options.requestId ?? randomUUID();
+        const timeoutMs = options.timeoutMs ?? 30000;
 
         return new Promise<unknown>((resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -183,11 +235,45 @@ export class Orchestrator {
                 reject(new Error(`Client request timed out after ${timeoutMs}ms.`));
             }, timeoutMs);
 
+            let abortCleanup: (() => void) | undefined;
+
+            if (options.signal) {
+                const onAbort = () => {
+                    this.pendingRequests.delete(requestId);
+                    clearTimeout(timeout);
+                    void this.sendRpcRequest(clientId, {
+                        action: "kill_command",
+                        targetRequestId: requestId,
+                    }, {
+                        timeoutMs: 5000,
+                    }).catch(() => {
+                        return undefined;
+                    });
+                    reject(new Error("Command cancelled."));
+                };
+
+                if (options.signal.aborted) {
+                    onAbort();
+                    return;
+                }
+
+                options.signal.addEventListener("abort", onAbort, { once: true });
+                abortCleanup = () => {
+                    options.signal?.removeEventListener("abort", onAbort);
+                };
+            }
+
             this.pendingRequests.set(requestId, {
+                requestId,
                 clientId,
                 resolve,
                 reject,
                 timeout,
+                kind: options.kind ?? "default",
+                stdout: "",
+                stderr: "",
+                onChunk: options.onChunk,
+                abortCleanup,
             });
 
             this.sendMessage(state.socket, {
@@ -294,6 +380,7 @@ export class Orchestrator {
 
             this.pendingRequests.delete(parsedMessage.requestId);
             clearTimeout(pendingRequest.timeout);
+            pendingRequest.abortCleanup?.();
 
             if (pendingRequest.clientId !== clientId) {
                 pendingRequest.reject(new Error("Response came from unexpected client."));
@@ -305,7 +392,41 @@ export class Orchestrator {
                 return;
             }
 
+            if (pendingRequest.kind === "command") {
+                const commandResult = parsedMessage.result as CommandCompletionResult;
+
+                pendingRequest.resolve({
+                    commandId: pendingRequest.requestId,
+                    ...commandResult,
+                    stdout: pendingRequest.stdout,
+                    stderr: pendingRequest.stderr,
+                });
+                return;
+            }
+
             pendingRequest.resolve(parsedMessage.result);
+            return;
+        }
+
+        if (parsedMessage.type === "rpc_stream") {
+            const pendingRequest = this.pendingRequests.get(parsedMessage.requestId);
+
+            if (!pendingRequest || pendingRequest.kind !== "command") {
+                return;
+            }
+
+            if (pendingRequest.clientId !== clientId) {
+                pendingRequest.reject(new Error("Stream event came from unexpected client."));
+                return;
+            }
+
+            if (parsedMessage.stream === "stdout") {
+                pendingRequest.stdout += parsedMessage.chunk;
+            } else {
+                pendingRequest.stderr += parsedMessage.chunk;
+            }
+
+            pendingRequest.onChunk?.(parsedMessage.stream, parsedMessage.chunk);
         }
     }
 
@@ -323,6 +444,7 @@ export class Orchestrator {
 
             this.pendingRequests.delete(requestId);
             clearTimeout(pendingRequest.timeout);
+            pendingRequest.abortCleanup?.();
             pendingRequest.reject(new Error(`Client disconnected while request was in flight: ${clientId}`));
         }
 

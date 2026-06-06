@@ -1,8 +1,11 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
     CallToolRequestSchema,
     type Implementation,
+    type ServerNotification,
+    type ServerRequest,
     ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Orchestrator } from "./Orchestrator.ts";
@@ -17,7 +20,10 @@ type ToolDefinition = {
     name: string;
     description: string;
     inputSchema: JsonSchema;
-    run: (args?: Record<string, unknown>) => Promise<unknown>;
+    run: (
+        args: Record<string, unknown> | undefined,
+        extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+    ) => Promise<unknown>;
 };
 
 export class McpOrchestratorServer {
@@ -114,11 +120,26 @@ export class McpOrchestratorServer {
                 },
                 required: ["directoryName", "command"],
             },
-            run: async (args) => {
+            run: async (args, extra) => {
                 const directoryName = this.readString(args, "directoryName");
                 const command = this.readString(args, "command");
                 const timeoutMs = this.readNumber(args, "timeoutMs", 30000);
-                const result = await this.orchestrator.runCommandOnDirectory(directoryName, command, timeoutMs);
+                const result = await this.orchestrator.runCommandOnDirectoryWithOptions(directoryName, command, {
+                    timeoutMs,
+                    signal: extra.signal,
+                    onChunk: (stream, chunk) => {
+                        void this.server.sendLoggingMessage({
+                            _meta: extra._meta,
+                            level: stream === "stderr" ? "warning" : "info",
+                            logger: "client-command",
+                            data: {
+                                directoryName,
+                                stream,
+                                chunk,
+                            },
+                        }, extra.sessionId);
+                    },
+                });
 
                 return {
                     directoryName,
@@ -168,7 +189,7 @@ export class McpOrchestratorServer {
             };
         });
 
-        this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             const tool = this.tools.get(request.params.name);
 
             if (!tool) {
@@ -179,7 +200,7 @@ export class McpOrchestratorServer {
             }
 
             try {
-                const result = await tool.run(request.params.arguments);
+                const result = await tool.run(request.params.arguments, extra);
                 return {
                     content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
                 };
