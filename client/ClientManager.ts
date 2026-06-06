@@ -16,6 +16,41 @@ const MAX_FILE_BYTES = 200_000;
 const CONNECT_RETRY_DELAY_MS = 1500;
 const MAX_CONNECT_RETRIES = 0;
 
+// Logging configuration
+const VERBOSE_LOGGING = process.env.ORCH_VERBOSE === "true";
+
+type LogLevel = "info" | "debug" | "error" | "warn";
+
+class Logger {
+    log(level: LogLevel, message: string, data?: unknown): void {
+        const timestamp = new Date().toISOString();
+        const prefix = `[${timestamp}] [${level.toUpperCase()}]`;
+
+        if (level === "error") {
+            console.error(`${prefix}`, message, data);
+        } else if (VERBOSE_LOGGING || level === "warn") {
+            console.log(`${prefix}`, message, data ? JSON.stringify(data, null, 2) : "");
+        }
+    }
+
+    info(message: string, data?: unknown): void {
+        this.log("info", message, data);
+    }
+
+    debug(message: string, data?: unknown): void {
+        this.log("debug", message, data);
+    }
+
+    warn(message: string, data?: unknown): void {
+        this.log("warn", message, data);
+    }
+
+    error(message: string, data?: unknown): void {
+        this.log("error", message, data);
+    }
+}
+
+const logger = new Logger();
 type ActiveCommand = {
     childProcess: ChildProcessByStdio<null, Readable, Readable>;
     command: string;
@@ -58,7 +93,8 @@ export class ClientManager {
             cwd: this.cwd,
         });
 
-        console.log(`Connected as directory '${this.directoryName}' (${this.cwd})`);
+        logger.info(`Connected as directory '${this.directoryName}' (${this.cwd})`);
+        logger.debug(`Verbose logging is ${VERBOSE_LOGGING ? "ENABLED" : "DISABLED"}. Set ORCH_VERBOSE=true to enable.`);
     }
 
     private async connectWithRetry(): Promise<void> {
@@ -78,7 +114,7 @@ export class ClientManager {
                 }
 
                 const message = error instanceof Error ? error.message : "Unknown connect error.";
-                console.error(
+                logger.error(
                     `Connect attempt ${attempt} failed (${message}). Retrying in ${CONNECT_RETRY_DELAY_MS}ms...`,
                 );
 
@@ -118,11 +154,11 @@ export class ClientManager {
 
         this.socket.on("close", () => {
             this.killAllActiveCommands();
-            console.log("Disconnected from orchestrator.");
+            logger.warn("Disconnected from orchestrator.");
         });
 
         this.socket.on("error", (error) => {
-            console.error("Socket error:", error.message);
+            logger.error("Socket error:", { message: error.message });
         });
     }
 
@@ -132,29 +168,36 @@ export class ClientManager {
         try {
             message = JSON.parse(line) as OrchestratorToClientMessage;
         } catch {
-            console.log(`Unparseable message: ${line}`);
+            logger.error(`Unparseable message: ${line}`);
             return;
         }
 
         if (message.type === "welcome") {
-            console.log(`Assigned client ID: ${message.clientId}`);
+            logger.info(`Assigned client ID: ${message.clientId}`);
             return;
         }
 
         if (message.type === "rpc_request") {
+                        logger.debug(`Received RPC request`, { requestId: message.requestId, request: message.request });
             void this.handleRpcRequest(message.requestId, message.request);
             return;
         }
 
         if (message.type === "error") {
-            console.error(`Server error: ${message.error}`);
+            logger.error(`Server error: ${message.error}`);
         }
     }
 
     private async handleRpcRequest(requestId: string, request: ClientRpcRequest): Promise<void> {
         try {
             if (request.action === "read_file") {
+                                logger.debug(`[${requestId}] Handling read_file request`, { filePath: request.filePath });
                 const result = await this.readLocalFile(request.filePath);
+                                logger.debug(`[${requestId}] Read file completed`, {
+                                    filePath: request.filePath,
+                                    contentLength: result.content.length,
+                                    truncated: result.truncated,
+                                });
                 this.send({
                     type: "rpc_response",
                     requestId,
@@ -165,7 +208,14 @@ export class ClientManager {
             }
 
             if (request.action === "run_command") {
+                                logger.debug(`[${requestId}] Handling run_command request`, { command: request.command, timeoutMs: request.timeoutMs });
                 const result = await this.runLocalCommand(requestId, request.command, request.timeoutMs);
+                                logger.debug(`[${requestId}] Command completed`, {
+                                    command: request.command,
+                                    exitCode: result.exitCode,
+                                    signal: result.signal,
+                                    timedOut: result.timedOut,
+                                });
                 this.send({
                     type: "rpc_response",
                     requestId,
@@ -176,7 +226,9 @@ export class ClientManager {
             }
 
             if (request.action === "kill_command") {
+                                logger.debug(`[${requestId}] Handling kill_command request`, { targetRequestId: request.targetRequestId });
                 const result = this.killActiveCommand(request.targetRequestId);
+                                logger.debug(`[${requestId}] Kill command result`, { ok: result.ok, error: result.ok ? undefined : result.error });
                 this.send({
                     type: "rpc_response",
                     requestId,
@@ -188,7 +240,9 @@ export class ClientManager {
             }
 
             if (request.action === "list_files") {
+                logger.debug(`[${requestId}] Handling list_files request`, { relativePath: request.relativePath });
                 const result = await this.listLocalFiles(request.relativePath);
+                logger.debug(`[${requestId}] List files completed`, { basePath: result.basePath, entryCount: result.entries.length });
                 this.send({
                     type: "rpc_response",
                     requestId,
@@ -197,6 +251,11 @@ export class ClientManager {
                 });
             }
         } catch (error) {
+            logger.error(`[${requestId}] Request handler error`, {
+                action: request.action,
+                message: error instanceof Error ? error.message : "Unknown error",
+                stack: VERBOSE_LOGGING && error instanceof Error ? error.stack : undefined,
+            });
             this.send({
                 type: "rpc_response",
                 requestId,
@@ -249,6 +308,7 @@ export class ClientManager {
         timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
     ): Promise<CommandCompletionResult> {
         return new Promise<CommandCompletionResult>((resolve, reject) => {
+                        logger.debug(`[${requestId}] Spawning command`, { command, cwd: this.cwd, timeoutMs });
             const childProcess = spawn("/bin/sh", ["-lc", command], {
                 cwd: this.cwd,
                 env: process.env,
@@ -267,6 +327,7 @@ export class ClientManager {
                 activeCommand.timeout = setTimeout(() => {
                     activeCommand.timedOut = true;
                     activeCommand.killed = true;
+                                        logger.warn(`[${requestId}] Command timeout after ${timeoutMs}ms`, { command });
                     childProcess.kill("SIGTERM");
                 }, timeoutMs);
             }
@@ -274,24 +335,31 @@ export class ClientManager {
             this.activeCommands.set(requestId, activeCommand);
 
             childProcess.stdout.on("data", (chunk: Buffer | string) => {
+                                const chunkStr = chunk.toString("utf8");
+                                if (VERBOSE_LOGGING) {
+                                    logger.debug(`[${requestId}] stdout chunk`, { length: chunkStr.length, preview: chunkStr.slice(0, 100) });
+                                }
                 this.send({
                     type: "rpc_stream",
                     requestId,
                     stream: "stdout",
-                    chunk: chunk.toString("utf8"),
+                    chunk: chunkStr,
                 });
             });
 
             childProcess.stderr.on("data", (chunk: Buffer | string) => {
+                                const chunkStr = chunk.toString("utf8");
+                                logger.debug(`[${requestId}] stderr chunk`, { length: chunkStr.length, preview: chunkStr.slice(0, 100) });
                 this.send({
                     type: "rpc_stream",
                     requestId,
                     stream: "stderr",
-                    chunk: chunk.toString("utf8"),
+                    chunk: chunkStr,
                 });
             });
 
             childProcess.once("error", (error) => {
+                                logger.error(`[${requestId}] Child process error`, { message: error.message });
                 this.clearActiveCommand(requestId);
                 reject(error);
             });
@@ -354,6 +422,15 @@ export class ClientManager {
     }
 
     private send(message: ClientToOrchestratorMessage): void {
+                if (message.type === "hello") {
+                    logger.info(`Sending hello message`, { directoryName: message.directoryName, cwd: message.cwd });
+                } else if (message.type === "rpc_response") {
+                    logger.debug(`Sending RPC response`, { requestId: message.requestId, ok: message.ok, hasError: !!message.error });
+                } else if (message.type === "rpc_stream") {
+                    if (VERBOSE_LOGGING) {
+                        logger.debug(`Sending RPC stream chunk`, { requestId: message.requestId, stream: message.stream, chunkLength: message.chunk?.length ?? 0 });
+                    }
+                }
         this.socket.write(`${JSON.stringify(message)}\n`);
     }
 
