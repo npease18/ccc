@@ -28,7 +28,9 @@ class Logger {
 
         if (level === "error") {
             console.error(`${prefix}`, message, data);
-        } else if (VERBOSE_LOGGING || level === "warn") {
+        } else if (level === "warn" || level === "info") {
+            console.log(`${prefix}`, message, data ? JSON.stringify(data, null, 2) : "");
+        } else if (VERBOSE_LOGGING) {
             console.log(`${prefix}`, message, data ? JSON.stringify(data, null, 2) : "");
         }
     }
@@ -94,7 +96,7 @@ export class ClientManager {
         });
 
         logger.info(`Connected as directory '${this.directoryName}' (${this.cwd})`);
-        logger.debug(`Verbose logging is ${VERBOSE_LOGGING ? "ENABLED" : "DISABLED"}. Set ORCH_VERBOSE=true to enable.`);
+        logger.info(`Verbose logging is ${VERBOSE_LOGGING ? "ENABLED" : "DISABLED"}. Set ORCH_VERBOSE=true to enable.`);
     }
 
     private async connectWithRetry(): Promise<void> {
