@@ -1,0 +1,20 @@
+{
+  "name": "ccc",
+  "module": "mcp-server/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start:server": "bun run mcp-server/index.ts",
+    "start:client": "bun run client/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}
