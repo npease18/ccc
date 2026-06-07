@@ -1,10 +1,10 @@
 {
   "name": "ccc",
-  "module": "mcp-server/index.ts",
+  "module": "server/index.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "start:server": "bun run mcp-server/index.ts",
+    "start:server": "bun run server/index.ts",
     "start:client": "bun run client/index.ts",
     "typecheck": "tsc --noEmit"
   },
