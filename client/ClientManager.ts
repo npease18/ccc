@@ -1,5 +1,5 @@
 import net from "node:net";
-import { readFile } from "node:fs/promises";
+import { readFile, open } from "node:fs/promises";
 import path from "node:path";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { readdir } from "node:fs/promises";
@@ -241,6 +241,19 @@ export class ClientManager {
                 return;
             }
 
+            if (request.action === "read_file_chunk") {
+                logger.debug(`[${requestId}] Handling read_file_chunk request`, { filePath: request.filePath, offset: request.offset, length: request.length });
+                const result = await this.readLocalFileChunk(request.filePath, request.offset, request.length);
+                logger.debug(`[${requestId}] Read file chunk completed`, { filePath: request.filePath, bytesRead: result.bytesRead, totalBytes: result.totalBytes });
+                this.send({
+                    type: "rpc_response",
+                    requestId,
+                    ok: true,
+                    result,
+                });
+                return;
+            }
+
             if (request.action === "list_files") {
                 logger.debug(`[${requestId}] Handling list_files request`, { relativePath: request.relativePath });
                 const result = await this.listLocalFiles(request.relativePath);
@@ -289,6 +302,32 @@ export class ClientManager {
         }
 
         return resolvedPath;
+    }
+
+    private async readLocalFileChunk(
+        filePath: string,
+        offset: number,
+        length: number,
+    ): Promise<{ resolvedPath: string; content: string; offset: number; bytesRead: number; totalBytes: number; hasMore: boolean }> {
+        const resolvedPath = this.resolveUnderCwd(filePath);
+        const fd = await open(resolvedPath, "r");
+        try {
+            const { size } = await fd.stat();
+            const safeOffset = Math.min(offset, size);
+            const safeLength = Math.min(length, size - safeOffset);
+            const buffer = Buffer.allocUnsafe(safeLength);
+            const { bytesRead } = await fd.read(buffer, 0, safeLength, safeOffset);
+            return {
+                resolvedPath,
+                content: buffer.subarray(0, bytesRead).toString("utf8"),
+                offset: safeOffset,
+                bytesRead,
+                totalBytes: size,
+                hasMore: safeOffset + bytesRead < size,
+            };
+        } finally {
+            await fd.close();
+        }
     }
 
     private async readLocalFile(filePath: string): Promise<{ resolvedPath: string; content: string; truncated: boolean }> {

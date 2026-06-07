@@ -184,6 +184,21 @@ export class Orchestrator {
         });
     }
 
+    async readFileChunkFromDirectory(directoryName: string, filePath: string, offset: number, length: number): Promise<unknown> {
+        const client = this.findClientByDirectoryName(directoryName);
+
+        if (!client) {
+            throw new Error(`No connected client for directory: ${directoryName}`);
+        }
+
+        return this.sendRpcRequest(client.clientId, {
+            action: "read_file_chunk",
+            filePath,
+            offset,
+            length,
+        });
+    }
+
     async listFilesOnDirectory(directoryName: string, relativePath?: string): Promise<unknown> {
         const client = this.findClientByDirectoryName(directoryName);
 

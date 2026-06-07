@@ -109,6 +109,37 @@ export class McpOrchestratorServer {
         });
 
         this.registerTool({
+            name: "get_client_file_chunk",
+            description:
+                "Read a specific byte range of a file from one connected client directory. " +
+                "Use this to page through large files that exceed what get_client_file can return at once. " +
+                "The response includes totalBytes and hasMore so you know when to stop reading.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    directoryName: { type: "string" },
+                    filePath: { type: "string" },
+                    offset: { type: "number", description: "Byte offset to start reading from (default 0)." },
+                    length: { type: "number", description: "Maximum number of bytes to read (default 100000)." },
+                },
+                required: ["directoryName", "filePath"],
+            },
+            run: async (args) => {
+                const directoryName = this.readString(args, "directoryName");
+                const filePath = this.readString(args, "filePath");
+                const offset = this.readNumber(args, "offset", 0);
+                const length = this.readNumber(args, "length", 100_000);
+                const result = await this.orchestrator.readFileChunkFromDirectory(directoryName, filePath, offset, length);
+
+                return {
+                    directoryName,
+                    filePath,
+                    result,
+                };
+            },
+        });
+
+        this.registerTool({
             name: "run_client_command",
             description: "Run a shell command on one connected client directory and return stdout/stderr.",
             inputSchema: {
