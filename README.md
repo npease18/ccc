@@ -43,7 +43,7 @@ To pin a specific release version:
 curl -fsSL https://raw.githubusercontent.com/npease18/ccc/main/install-server.sh | VERSION=main-abc1234... bash
 ```
 
-The script installs the binary to `/usr/local/bin/ccc-server` and registers it as `ccc-orchestrator` in `~/.claude.json`. Restart Claude after running it.
+The script installs the binary to `~/.local/bin/ccc-server` and registers it as `ccc-orchestrator` with Claude via `claude mcp add`. Restart Claude after running it.
 
 ### Using Release Binaries Directly
 

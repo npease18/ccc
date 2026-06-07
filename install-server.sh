@@ -2,7 +2,7 @@
 set -e
 
 VERSION="${VERSION:-"latest"}"
-INSTALL_DIR="${INSTALL_DIR:-"/usr/local/bin"}"
+INSTALL_DIR="${INSTALL_DIR:-"${HOME}/.local/bin"}"
 BINARY_NAME="ccc-server"
 MCP_SERVER_KEY="ccc-orchestrator"
 
