@@ -1,6 +1,6 @@
 {
     "id": "ccc-client",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "name": "CCC Client",
     "description": "Installs the ccc-client binary and adds a 'ccc' command to connect to the CCC orchestrator running on the WSL host.",
     "documentationURL": "https://github.com/npease18/ccc",
