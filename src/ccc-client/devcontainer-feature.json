@@ -1,0 +1,29 @@
+{
+    "id": "ccc-client",
+    "version": "1.0.0",
+    "name": "CCC Client",
+    "description": "Installs the ccc-client binary and adds a 'start_ccc' command to connect to the CCC orchestrator running on the WSL host.",
+    "documentationURL": "https://github.com/npease18/ccc",
+    "options": {
+        "version": {
+            "type": "string",
+            "default": "latest",
+            "description": "Release version to install. Use 'latest' or a specific release tag (e.g. 'main-abc1234...')."
+        },
+        "orch_host": {
+            "type": "string",
+            "default": "host.docker.local",
+            "description": "Hostname or IP of the CCC orchestrator server. Defaults to 'host.docker.internal' which resolves to the WSL host."
+        },
+        "orch_port": {
+            "type": "string",
+            "default": "9000",
+            "description": "TCP port the CCC orchestrator listens on."
+        },
+        "orch_verbose": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable verbose debug logging on the client."
+        }
+    }
+}
