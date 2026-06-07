@@ -12,7 +12,7 @@
         },
         "orch_host": {
             "type": "string",
-            "default": "host.docker.local",
+            "default": "host.docker.internal",
             "description": "Hostname or IP of the CCC orchestrator server. Defaults to 'host.docker.internal' which resolves to the WSL host."
         },
         "orch_port": {
