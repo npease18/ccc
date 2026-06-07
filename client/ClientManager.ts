@@ -27,7 +27,7 @@ class Logger {
         const prefix = `[${timestamp}] [${level.toUpperCase()}]`;
 
         if (level === "error") {
-            console.error(`${prefix}`, message, data);
+            console.error(`${prefix}`, message, ...(data !== undefined ? [data] : []));
         } else if (level === "warn" || level === "info") {
             console.log(`${prefix}`, message, data ? JSON.stringify(data, null, 2) : "");
         } else if (VERBOSE_LOGGING) {
