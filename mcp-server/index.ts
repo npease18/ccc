@@ -1,6 +1,12 @@
 #!/usr/bin/env bun
 
 import { McpOrchestratorServer } from "./McpOrchestratorServer.ts";
+import { printVersion } from "../version.ts";
+
+if (process.argv.includes("-v") || process.argv.includes("--version")) {
+    printVersion("ccc-server");
+    process.exit(0);
+}
 
 const server = new McpOrchestratorServer({
     name: "ccc-mcp-orchestrator",
