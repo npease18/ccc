@@ -23,43 +23,70 @@ Runs an MCP orchestrator server in WSL that accepts connections from clients run
 
 ## Setup
 
-### Using Release Binaries
+### Install the Server
 
-Download the latest binaries from the [GitHub Releases](https://github.com/npease18/ccc/releases) page.
+Run the following in WSL to download the `ccc-server` binary and register it with Claude in one step:
 
-Each release includes:
+```bash
+curl -fsSL https://raw.githubusercontent.com/npease18/ccc/main/install-server.sh | bash
+```
+
+Or with zsh:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/npease18/ccc/main/install-server.sh | zsh
+```
+
+To pin a specific release version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/npease18/ccc/main/install-server.sh | VERSION=main-abc1234... bash
+```
+
+The script installs the binary to `/usr/local/bin/ccc-server` and registers it as `ccc-orchestrator` in `~/.claude.json`. Restart Claude after running it.
+
+### Using Release Binaries Directly
+
+Binaries are also available on the [GitHub Releases](https://github.com/npease18/ccc/releases) page if you prefer a manual install. Each release includes:
 - `ccc-server-linux-x64` — The MCP orchestrator server
 - `ccc-client-linux-x64` — The client to run in each dev container
 - `SHA256SUMS` — Checksums for verifying downloads
 
-**Verify the download:**
-```bash
-sha256sum -c SHA256SUMS
+### Install the Client in a Dev Container
+
+The recommended way to run the client is via the [Dev Container feature](https://containers.dev/implementors/features/). Add it to your `.devcontainer/devcontainer.json`:
+
+```json
+{
+  "features": {
+    "ghcr.io/npease18/ccc/ccc-client:latest": {}
+  }
+}
 ```
 
-**Make binaries executable:**
-```bash
-chmod +x ccc-server-linux-x64 ccc-client-linux-x64
+This installs the `ccc-client` binary and a `ccc` wrapper command that automatically connects to the orchestrator on `host.docker.internal:9000` when the container starts.
+
+**Available options:**
+
+```json
+{
+  "features": {
+    "ghcr.io/npease18/ccc/ccc-client:latest": {
+      "version": "latest",
+      "orch_host": "host.docker.internal",
+      "orch_port": "9000",
+      "orch_verbose": false
+    }
+  }
+}
 ```
 
-### Register the MCP Server with Claude
-
-Run the following command in WSL to register the MCP server (adjust the path to where you placed the binary):
-
-```bash
-claude mcp add -s user ccc-orchestrator -- /path/to/ccc-server-linux-x64
-```
-
-The `-s user` flag registers the server at the user scope, making it available across all Claude sessions.
-
-### Run the Client in a Dev Container
-
-Start the client from inside the dev container, pointing it at the WSL host:
-
-```bash
-# Using a release binary
-ORCH_HOST=docker.host.internal ./ccc-client-linux-x64
-```
+| Option | Default | Description |
+|---|---|---|
+| `version` | `latest` | Release version to install. Use `latest` or a specific tag (e.g. `main-abc1234...`). |
+| `orch_host` | `host.docker.internal` | Hostname or IP of the orchestrator server. |
+| `orch_port` | `9000` | TCP port the orchestrator listens on. |
+| `orch_verbose` | `false` | Enable verbose debug logging on the client. |
 
 ## Environment Variables
 
