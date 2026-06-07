@@ -35,14 +35,10 @@ jobs:
           echo "RELEASE_TAG=main-${GITHUB_SHA}" >> "$GITHUB_ENV"
 
       - name: Build server binary
-        env:
-          COMMIT_HASH: ${{ github.sha }}
-        run: bun build --compile --outfile dist/ccc-server-linux-x64 ./mcp-server/index.ts
+        run: bun build --compile --define "process.env.COMMIT_HASH='${{ github.sha }}'" --outfile dist/ccc-server-linux-x64 ./mcp-server/index.ts
 
       - name: Build client binary
-        env:
-          COMMIT_HASH: ${{ github.sha }}
-        run: bun build --compile --outfile dist/ccc-client-linux-x64 ./client/index.ts
+        run: bun build --compile --define "process.env.COMMIT_HASH='${{ github.sha }}'" --outfile dist/ccc-client-linux-x64 ./client/index.ts
 
       - name: Generate checksums
         shell: bash

@@ -37,8 +37,8 @@ curl -fsSL --retry 3 "$DOWNLOAD_URL" -o "${INSTALL_DIR}/ccc-client"
 chmod +x "${INSTALL_DIR}/ccc-client"
 echo "Installed ccc-client to ${INSTALL_DIR}/ccc-client"
 
-# Write start_ccc wrapper — runtime env vars override, install-time values are the defaults
-cat > "${INSTALL_DIR}/start_ccc" <<WRAPPER
+# Write ccc wrapper — runtime env vars override, install-time values are the defaults
+cat > "${INSTALL_DIR}/ccc" <<WRAPPER
 #!/bin/sh
 exec env \\
   ORCH_HOST="\${ORCH_HOST:-${ORCH_HOST}}" \\
@@ -47,5 +47,5 @@ exec env \\
   ccc-client "\$@"
 WRAPPER
 
-chmod +x "${INSTALL_DIR}/start_ccc"
-echo "Done. Run 'start_ccc' to connect to the orchestrator."
+chmod +x "${INSTALL_DIR}/ccc"
+echo "Done. Run 'ccc' to connect to the orchestrator."
