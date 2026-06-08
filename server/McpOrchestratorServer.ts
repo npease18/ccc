@@ -140,6 +140,32 @@ export class McpOrchestratorServer {
         });
 
         this.registerTool({
+            name: "edit_client_file",
+            description: "Write (create or overwrite) a file on one connected client directory. Parent directories are created automatically.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    directoryName: { type: "string" },
+                    filePath: { type: "string" },
+                    content: { type: "string", description: "Full content to write to the file." },
+                },
+                required: ["directoryName", "filePath", "content"],
+            },
+            run: async (args) => {
+                const directoryName = this.readString(args, "directoryName");
+                const filePath = this.readString(args, "filePath");
+                const content = this.readString(args, "content");
+                const result = await this.orchestrator.writeFileOnDirectory(directoryName, filePath, content);
+
+                return {
+                    directoryName,
+                    filePath,
+                    result,
+                };
+            },
+        });
+
+        this.registerTool({
             name: "run_client_command",
             description: "Run a shell command on one connected client directory and return stdout/stderr.",
             inputSchema: {

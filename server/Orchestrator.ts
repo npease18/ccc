@@ -199,6 +199,20 @@ export class Orchestrator {
         });
     }
 
+    async writeFileOnDirectory(directoryName: string, filePath: string, content: string): Promise<unknown> {
+        const client = this.findClientByDirectoryName(directoryName);
+
+        if (!client) {
+            throw new Error(`No connected client for directory: ${directoryName}`);
+        }
+
+        return this.sendRpcRequest(client.clientId, {
+            action: "write_file",
+            filePath,
+            content,
+        });
+    }
+
     async listFilesOnDirectory(directoryName: string, relativePath?: string): Promise<unknown> {
         const client = this.findClientByDirectoryName(directoryName);
 

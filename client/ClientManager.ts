@@ -1,5 +1,5 @@
 import net from "node:net";
-import { readFile, open } from "node:fs/promises";
+import { readFile, open, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { readdir } from "node:fs/promises";
@@ -254,6 +254,19 @@ export class ClientManager {
                 return;
             }
 
+            if (request.action === "write_file") {
+                logger.debug(`[${requestId}] Handling write_file request`, { filePath: request.filePath, contentLength: request.content.length });
+                const result = await this.writeLocalFile(request.filePath, request.content);
+                logger.debug(`[${requestId}] Write file completed`, { resolvedPath: result.resolvedPath, bytesWritten: result.bytesWritten });
+                this.send({
+                    type: "rpc_response",
+                    requestId,
+                    ok: true,
+                    result,
+                });
+                return;
+            }
+
             if (request.action === "list_files") {
                 logger.debug(`[${requestId}] Handling list_files request`, { relativePath: request.relativePath });
                 const result = await this.listLocalFiles(request.relativePath);
@@ -302,6 +315,14 @@ export class ClientManager {
         }
 
         return resolvedPath;
+    }
+
+    private async writeLocalFile(filePath: string, content: string): Promise<{ resolvedPath: string; bytesWritten: number }> {
+        const resolvedPath = this.resolveUnderCwd(filePath);
+        await mkdir(path.dirname(resolvedPath), { recursive: true });
+        const data = Buffer.from(content, "utf8");
+        await writeFile(resolvedPath, data);
+        return { resolvedPath, bytesWritten: data.byteLength };
     }
 
     private async readLocalFileChunk(

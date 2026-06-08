@@ -1,4 +1,4 @@
-export type RpcAction = "read_file" | "read_file_chunk" | "run_command" | "list_files" | "kill_command";
+export type RpcAction = "read_file" | "read_file_chunk" | "write_file" | "run_command" | "list_files" | "kill_command";
 
 export type ClientRpcRequest =
     | {
@@ -10,6 +10,11 @@ export type ClientRpcRequest =
         filePath: string;
         offset: number;
         length: number;
+      }
+    | {
+        action: "write_file";
+        filePath: string;
+        content: string;
       }
     | {
         action: "run_command";
